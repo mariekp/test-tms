@@ -160,28 +160,33 @@ export default function ArboristTree({
       if (!folder) return;
     }
 
-    // Принудительно перезагрузить содержимое папки
-    const folderNode: NodeData = {
-      id: `folder-${folderId}`,
-      name: folder.name,
-      folderId: folderId,
-      parentFolderId: folder.parentFolderId,
-      children: [],
-      loaded: false,
+    const findNodeByFolderId = (nodes: NodeData[]): NodeData | undefined => {
+      for (const n of nodes) {
+        if (n.folderId === folderId) return n;
+        const found = findNodeByFolderId(n.children);
+        if (found) return found;
+      }
+      return undefined;
     };
 
-    await loadFolder(folderNode);
+    const existingNode = findNodeByFolderId(treeData);
 
-    // Обновить дерево
-    const updateTree = (nodes: NodeData[]): NodeData[] =>
-      nodes.map((n) => {
-        if (n.folderId === folderId) {
-          return { ...folderNode, children: folderNode.children };
-        }
-        return { ...n, children: updateTree(n.children) };
-      });
+    const targetNode: NodeData =
+      existingNode
+        ? { ...existingNode, loaded: false }
+        : {
+            id: `folder-${folderId}`,
+            name: folder.name,
+            folderId: folderId,
+            parentFolderId: folder.parentFolderId,
+            children: [],
+            loaded: false,
+            checked: false,
+            indeterminate: false,
+            open: false,
+          };
 
-    setTreeData((prev) => updateTree(prev));
+    await loadFolder(targetNode);
   };
 
   // --- Клик по узлу ---
