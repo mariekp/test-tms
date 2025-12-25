@@ -121,7 +121,7 @@ async function createCase(jwt: string, folderId: string, title: string, descript
     type: 0,
     automationStatus: 0,
     description: description,
-    template: 0,
+    template: 1,
     preConditions: '',
     expectedResults: '',
   };

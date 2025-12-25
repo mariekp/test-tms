@@ -1,7 +1,7 @@
 'use client';
-import { useState, useEffect, useContext, ChangeEvent, DragEvent } from 'react';
-import { Input, Textarea, Select, SelectItem, Button, Divider, Tooltip, addToast, Badge } from '@heroui/react';
-import { Save, Plus, ArrowLeft, Circle } from 'lucide-react';
+import { useState, useEffect, useContext, ChangeEvent, DragEvent, useRef } from 'react';
+import { Input, Textarea, Select, SelectItem, Divider, addToast } from '@heroui/react';
+import { Circle } from 'lucide-react';
 import CaseStepsEditor from './CaseStepsEditor';
 import CaseAttachmentsEditor from './CaseAttachmentsEditor';
 import { updateSteps } from './stepControl';
@@ -9,7 +9,6 @@ import { fetchCreateAttachments, fetchDownloadAttachment, fetchDeleteAttachment 
 import CaseTagsEditor from './CaseTagsEditor';
 import { fetchCase, updateCase } from '@/utils/caseControl';
 import { priorities, testTypes, templates } from '@/config/selection';
-import { useRouter } from '@/src/i18n/routing';
 import { TokenContext } from '@/utils/TokenProvider';
 import { useFormGuard } from '@/utils/formGuard';
 import { CaseType, AttachmentType, CaseMessages, StepType } from '@/types/case';
@@ -61,12 +60,73 @@ export default function CaseEditor({
   const tokenContext = useContext(TokenContext);
   const [testCase, setTestCase] = useState<CaseType>(defaultTestCase);
   const [isTitleInvalid] = useState<boolean>(false);
-  const [isUpdating, setIsUpdating] = useState<boolean>(false);
   const [plusCount, setPlusCount] = useState<number>(0);
   const [isDirty, setIsDirty] = useState(false);
   const [selectedTags, setSelectedTags] = useState<{ id: number; name: string }[]>([]);
+  const stepsRef = useRef<StepType[]>([]);
 
   useFormGuard(isDirty, messages.areYouSureLeave);
+
+  const saveCaseData = async (nextCase: CaseType) => {
+    if (!tokenContext.isSignedIn()) return;
+    try {
+      await updateCase(tokenContext.token.access_token, nextCase);
+      setIsDirty(false);
+      onUpdated?.(nextCase);
+    } catch (error) {
+      logError('Error updating test case', error);
+      addToast({
+        title: 'Error',
+        description: messages.errorUpdatingTestCase,
+        color: 'danger',
+      });
+    } finally {
+    }
+  };
+
+  const saveSteps = async (steps: StepType[]) => {
+    if (!tokenContext.isSignedIn()) return;
+    try {
+      await updateSteps(tokenContext.token.access_token, Number(caseId), steps);
+      const refreshed = await fetchCase(tokenContext.token.access_token, Number(caseId));
+      if (refreshed && refreshed.Steps) {
+        refreshed.Steps.forEach((step: StepType) => {
+          step.editState = 'notChanged';
+        });
+        setTestCase(refreshed);
+        stepsRef.current = refreshed.Steps || [];
+        if (refreshed.Tags) {
+          setSelectedTags(Array.isArray(refreshed.Tags) ? refreshed.Tags : []);
+        }
+      }
+      setIsDirty(false);
+    } catch (error) {
+      logError('Error updating steps', error);
+      addToast({
+        title: 'Error',
+        description: messages.errorUpdatingTestCase,
+        color: 'danger',
+      });
+    } finally {
+    }
+  };
+
+  const saveTags = async (tags: { id: number; name: string }[]) => {
+    if (!tokenContext.isSignedIn()) return;
+    try {
+      const tagIds = tags.map((tag) => tag.id);
+      await updateCaseTags(tokenContext.token.access_token, Number(caseId), tagIds, projectId);
+      setIsDirty(false);
+    } catch (error) {
+      logError('Error updating case tags', error);
+      addToast({
+        title: 'Error',
+        description: messages.errorUpdatingTestCase,
+        color: 'danger',
+      });
+    } finally {
+    }
+  };
 
   const onPlusClick = async (newStepNo: number) => {
     setIsDirty(true);
@@ -105,6 +165,7 @@ export default function CaseEditor({
         ...testCase,
         Steps: updatedSteps,
       });
+      stepsRef.current = updatedSteps;
     }
   };
 
@@ -138,6 +199,8 @@ export default function CaseEditor({
         ...testCase,
         Steps: updatedSteps,
       });
+      stepsRef.current = updatedSteps;
+      await saveSteps(updatedSteps);
     }
   };
 
@@ -198,21 +261,23 @@ export default function CaseEditor({
   };
 
   const onStepUpdate = (stepId: number, changeStep: StepType) => {
+    setIsDirty(true);
     if (changeStep.editState === 'notChanged') {
       changeStep.editState = 'changed';
     }
 
     if (testCase.Steps) {
+      const updatedSteps = testCase.Steps.map((step) => {
+        if (step.id === stepId) {
+          return changeStep;
+        }
+        return step;
+      });
       setTestCase({
         ...testCase,
-        Steps: testCase.Steps.map((step) => {
-          if (step.id === stepId) {
-            return changeStep;
-          } else {
-            return step;
-          }
-        }),
+        Steps: updatedSteps,
       });
+      stepsRef.current = updatedSteps;
     }
   };
 
@@ -225,6 +290,7 @@ export default function CaseEditor({
           step.editState = 'notChanged';
         });
         setTestCase(data);
+        stepsRef.current = data.Steps || [];
         if (data.Tags) {
           setSelectedTags(Array.isArray(data.Tags) ? data.Tags : []);
         }
@@ -237,55 +303,18 @@ export default function CaseEditor({
 
   return (
     <>
-      <div className="border-b-1 dark:border-neutral-700 w-full p-3 flex items-center justify-end">
-        <div className="flex items-center">
-          <Button
-            startContent={
-              <Badge isInvisible={!isDirty} color="danger" size="sm" content="" shape="circle">
-                <Save size={16} />
-              </Badge>
-            }
-            size="sm"
-            isDisabled={!tokenContext.isProjectDeveloper(Number(projectId))}
-            color="primary"
-            isLoading={isUpdating}
-            onPress={async () => {
-              setIsUpdating(true);
-              try {
-                await updateCase(tokenContext.token.access_token, testCase);
-                if (testCase.Steps) {
-                  await updateSteps(tokenContext.token.access_token, Number(caseId), testCase.Steps);
-                }
-
-                const tagIds = selectedTags.map((tag) => tag.id);
-                await updateCaseTags(tokenContext.token.access_token, Number(caseId), tagIds, projectId);
-
-                addToast({
-                  title: 'Success',
-                  color: 'success',
-                  description: messages.updatedTestCase,
-                });
-                setIsDirty(false);
-                onUpdated?.(testCase);
-              } catch (error) {
-                logError('Error updating test case', error);
-                addToast({
-                  title: 'Error',
-                  description: messages.errorUpdatingTestCase,
-                  color: 'danger',
-                });
-              } finally {
-                setIsUpdating(false);
-              }
-            }}
-          >
-            {isUpdating ? messages.updating : messages.update}
-          </Button>
+      <div className="border-b-1 dark:border-neutral-700 w-full p-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="font-semibold truncate max-w-[60vw]">{testCase.title || messages.title}</div>
+          {testCase.id ? (
+            <span className="text-xs text-default-500">ID: {testCase.id}</span>
+          ) : (
+            <span className="text-xs text-default-500">ID: {caseId}</span>
+          )}
         </div>
       </div>
 
       <div className="p-5">
-        <h6 className="font-bold">{messages.basic}</h6>
         <Input
           size="sm"
           type="text"
@@ -296,6 +325,12 @@ export default function CaseEditor({
           errorMessage={isTitleInvalid ? messages.pleaseEnterTitle : ''}
           onChange={(e) => {
             setTestCase({ ...testCase, title: e.target.value });
+            setIsDirty(true);
+          }}
+          onBlur={(e) => {
+            const nextCase = { ...testCase, title: e.target.value };
+            setTestCase(nextCase);
+            saveCaseData(nextCase);
           }}
           className="mt-3"
         />
@@ -308,6 +343,12 @@ export default function CaseEditor({
           value={testCase.description}
           onValueChange={(changeValue) => {
             setTestCase({ ...testCase, description: changeValue });
+            setIsDirty(true);
+          }}
+          onBlur={(e) => {
+            const nextCase = { ...testCase, description: e.target.value };
+            setTestCase(nextCase);
+            saveCaseData(nextCase);
           }}
           className="mt-3"
         />
@@ -318,6 +359,7 @@ export default function CaseEditor({
           onChange={(tags) => {
             setSelectedTags(tags);
             setIsDirty(true);
+            saveTags(tags);
           }}
           messages={messages}
         />
@@ -331,7 +373,10 @@ export default function CaseEditor({
               if (newSelection !== 'all' && newSelection.size !== 0) {
                 const selectedUid = Array.from(newSelection)[0];
                 const index = priorities.findIndex((priority) => priority.uid === selectedUid);
-                setTestCase({ ...testCase, priority: index });
+                const nextCase = { ...testCase, priority: index };
+                setTestCase(nextCase);
+                setIsDirty(true);
+                saveCaseData(nextCase);
               }
             }}
             startContent={
@@ -355,7 +400,10 @@ export default function CaseEditor({
               if (newSelection !== 'all' && newSelection.size !== 0) {
                 const selectedUid = Array.from(newSelection)[0];
                 const index = testTypes.findIndex((type) => type.uid === selectedUid);
-                setTestCase({ ...testCase, type: index });
+                const nextCase = { ...testCase, type: index };
+                setTestCase(nextCase);
+                setIsDirty(true);
+                saveCaseData(nextCase);
               }
             }}
             label={messages.type}
@@ -376,7 +424,10 @@ export default function CaseEditor({
               if (newSelection !== 'all' && newSelection.size !== 0) {
                 const selectedUid = Array.from(newSelection)[0];
                 const index = templates.findIndex((template) => template.uid === selectedUid);
-                setTestCase({ ...testCase, template: index });
+                const nextCase = { ...testCase, template: index };
+                setTestCase(nextCase);
+                setIsDirty(true);
+                saveCaseData(nextCase);
               }
             }}
             label={messages.template}
@@ -389,7 +440,7 @@ export default function CaseEditor({
         </div>
 
         <Divider className="my-6" />
-        {templates[testCase.template].uid === 'text' ? (
+        {templates[testCase.template].uid === 'text' && (
           <div>
             <h6 className="font-bold">{messages.testDetail}</h6>
             <div className="flex">
@@ -400,6 +451,12 @@ export default function CaseEditor({
                 value={testCase.preConditions}
                 onValueChange={(changeValue) => {
                   setTestCase({ ...testCase, preConditions: changeValue });
+                  setIsDirty(true);
+                }}
+                onBlur={(e) => {
+                  const nextCase = { ...testCase, preConditions: e.target.value };
+                  setTestCase(nextCase);
+                  saveCaseData(nextCase);
                 }}
                 className="mt-3 pe-1"
               />
@@ -411,38 +468,35 @@ export default function CaseEditor({
                 value={testCase.expectedResults}
                 onValueChange={(changeValue) => {
                   setTestCase({ ...testCase, expectedResults: changeValue });
+                  setIsDirty(true);
+                }}
+                onBlur={(e) => {
+                  const nextCase = { ...testCase, expectedResults: e.target.value };
+                  setTestCase(nextCase);
+                  saveCaseData(nextCase);
                 }}
                 className="mt-3 ps-1"
               />
             </div>
           </div>
-        ) : (
-          <div>
-            <div className="flex items-center mb-3">
-              <h6 className="font-bold">{messages.steps}</h6>
-              <Button
-                startContent={<Plus size={16} />}
-                size="sm"
-                isDisabled={!tokenContext.isProjectDeveloper(Number(projectId))}
-                color="primary"
-                className="ms-3"
-                onPress={() => onPlusClick(1)}
-              >
-                {messages.newStep}
-              </Button>
-            </div>
-            {testCase.Steps && (
-              <CaseStepsEditor
-                isDisabled={!tokenContext.isProjectDeveloper(Number(projectId))}
-                steps={testCase.Steps}
-                onStepUpdate={onStepUpdate}
-                onStepPlus={onPlusClick}
-                onStepDelete={onDeleteClick}
-                messages={messages}
-              />
-            )}
-          </div>
         )}
+
+        <div>
+          <div className="flex items-center mb-3">
+            <h6 className="font-bold">{messages.steps}</h6>
+          </div>
+          {testCase.Steps && (
+            <CaseStepsEditor
+              isDisabled={!tokenContext.isProjectDeveloper(Number(projectId))}
+              steps={testCase.Steps}
+              onStepUpdate={onStepUpdate}
+              onStepBlur={() => saveSteps(stepsRef.current)}
+              onStepPlus={onPlusClick}
+              onStepDelete={onDeleteClick}
+              messages={messages}
+            />
+          )}
+        </div>
 
         <Divider className="my-6" />
         <h6 className="font-bold">{messages.attachments}</h6>

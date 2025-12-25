@@ -3,7 +3,7 @@ import { Tree, NodeApi } from 'react-arborist';
 import { useState, useEffect, useContext, useRef } from 'react';
 import { TokenContext } from '@/utils/TokenProvider';
 import { fetchFolders, createFolder } from './foldersControl';
-import { fetchCases, moveCases, searchCases, createCase } from '@/utils/caseControl';
+import { fetchCases, moveCases, searchCases, createCase, updateCase, deleteCases } from '@/utils/caseControl';
 import { FolderType } from '@/types/folder';
 import { CaseType, CasesMessages } from '@/types/case';
 import { Folder, ChevronRight, ChevronDown, Bot, Hand, Plus } from 'lucide-react';
@@ -52,6 +52,8 @@ export default function ArboristTree({
   const [treeData, setTreeData] = useState<NodeData[]>([]);
   const [allFolders, setAllFolders] = useState<FolderType[]>([]);
   const nodesMapRef = useRef<Record<number, NodeApi<NodeData>>>({});
+  const [editingCaseId, setEditingCaseId] = useState<number | null>(null);
+  const [editingCaseTitle, setEditingCaseTitle] = useState('');
 
   const [isMoveDialogOpen, setIsMoveDialogOpen] = useState(false);
   const [casesToMove, setCasesToMove] = useState<NodeData[]>([]);
@@ -423,6 +425,25 @@ export default function ArboristTree({
   const renderCaseIcon = (caseData: CaseType) =>
     caseData.automationStatus === 1 ? <Bot size={16} strokeWidth={1.5} /> : <Hand size={16} strokeWidth={1.5} />;
 
+  const updateCaseTitleInTree = (caseId: number, title: string) => {
+    const updateNodes = (nodes: NodeData[]): NodeData[] =>
+      nodes.map((n) => {
+        if (n.isCase && n.caseData?.id === caseId) {
+          return { ...n, name: title, caseData: { ...n.caseData, title } };
+        }
+        return { ...n, children: updateNodes(n.children) };
+      });
+    setTreeData((prev) => updateNodes(prev));
+  };
+
+  const removeCaseFromTree = (caseId: number) => {
+    const removeNodes = (nodes: NodeData[]): NodeData[] =>
+      nodes
+        .map((n) => ({ ...n, children: removeNodes(n.children) }))
+        .filter((n) => !(n.isCase && n.caseData?.id === caseId));
+    setTreeData((prev) => removeNodes(prev));
+  };
+
   // --- Состояние open для фильтрации ---
   const openStateMap = useRef(new Map<number, boolean>());
   const saveOpenState = (nodes: NodeData[]) => {
@@ -621,7 +642,71 @@ export default function ArboristTree({
                       </>
                     )}
                   </div>
-                  <span className="title">{node.data.name}</span>
+                  {node.data.isCase && node.data.caseData ? (
+                    editingCaseId === node.data.caseData.id ? (
+                      <input
+                        value={editingCaseTitle}
+                        className="title bg-transparent outline-none border-none w-full"
+                        onChange={(e) => setEditingCaseTitle(e.target.value)}
+                        onBlur={async () => {
+                          const trimmed = editingCaseTitle.trim();
+                          setEditingCaseId(null);
+                          if (!trimmed || !node.data.caseData) {
+                            setEditingCaseTitle('');
+                            return;
+                          }
+                          const updatedCase = { ...node.data.caseData, title: trimmed };
+                          try {
+                            await updateCase(ctx.token.access_token, updatedCase);
+                            updateCaseTitleInTree(updatedCase.id, trimmed);
+                            onCaseUpdated?.(updatedCase);
+                          } catch (error) {
+                            console.error('Error updating case title', error);
+                          }
+                        }}
+                        onKeyDown={async (e) => {
+                          e.stopPropagation();
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            (e.target as HTMLInputElement).blur();
+                          }
+                          if (e.key === 'Escape') {
+                            e.preventDefault();
+                            setEditingCaseId(null);
+                            setEditingCaseTitle('');
+                          }
+                          if (e.key === 'Backspace' && editingCaseTitle.trim().length === 0 && node.data.caseData) {
+                            e.preventDefault();
+                            try {
+                              await deleteCases(ctx.token.access_token, [node.data.caseData.id], Number(projectId));
+                              removeCaseFromTree(node.data.caseData.id);
+                            } catch (error) {
+                              console.error('Error deleting case', error);
+                            } finally {
+                              setEditingCaseId(null);
+                              setEditingCaseTitle('');
+                            }
+                          }
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        autoFocus
+                      />
+                    ) : (
+                      <span
+                        className="title"
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          if (!ctx.isProjectDeveloper(Number(projectId))) return;
+                          setEditingCaseId(node.data.caseData!.id);
+                          setEditingCaseTitle(node.data.caseData!.title || '');
+                        }}
+                      >
+                        {node.data.name}
+                      </span>
+                    )
+                  ) : (
+                    <span className="title">{node.data.name}</span>
+                  )}
                 </div>
               );
             }}

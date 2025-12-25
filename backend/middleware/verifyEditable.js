@@ -1,12 +1,22 @@
 import { DataTypes } from 'sequelize';
-import { memberRoles } from '../routes/users/authSettings.js';
+import { roles, memberRoles } from '../routes/users/authSettings.js';
 import defineMember from '../models/members.js';
 import defineProject from '../models/projects.js';
 import defineFolder from '../models/folders.js';
 import defineCase from '../models/cases.js';
 import defineRun from '../models/runs.js';
+import defineUser from '../models/users.js';
 
 export default function verifyEditableMiddleware(sequelize) {
+  async function isAdminUser(userId) {
+    const User = defineUser(sequelize, DataTypes);
+    const user = await User.findByPk(userId);
+    if (!user) {
+      return false;
+    }
+    const adminRoleIndex = roles.findIndex((entry) => entry.uid === 'administrator');
+    return user.role === adminRoleIndex;
+  }
   /**
    * Verify user has project
    * (have to be called after verifySignedIn() middleware)
@@ -160,6 +170,9 @@ export default function verifyEditableMiddleware(sequelize) {
   }
 
   async function isDeveloper(projectId, userId) {
+    if (await isAdminUser(userId)) {
+      return true;
+    }
     const Project = defineProject(sequelize, DataTypes);
     const Member = defineMember(sequelize, DataTypes);
     Project.hasMany(Member, { foreignKey: 'projectId' });
@@ -244,6 +257,9 @@ export default function verifyEditableMiddleware(sequelize) {
   }
 
   async function isReporter(projectId, userId) {
+    if (await isAdminUser(userId)) {
+      return true;
+    }
     const Project = defineProject(sequelize, DataTypes);
     const Member = defineMember(sequelize, DataTypes);
     Project.hasMany(Member, { foreignKey: 'projectId' });

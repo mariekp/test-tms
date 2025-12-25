@@ -3,7 +3,8 @@ FROM node:20-alpine AS base
 # Install dependencies only when needed
 FROM base AS deps
 # Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.
-RUN apk add --no-cache libc6-compat
+# Build tools are required for native modules like sqlite3/bcrypt.
+RUN apk add --no-cache libc6-compat python3 make g++
 WORKDIR /app
 
 # Install root dependencies
@@ -58,6 +59,7 @@ COPY --from=deps /app/frontend/node_modules/next ./node_modules/next
 # Install backend dependencies directly in the container to ensure native modules are built correctly
 WORKDIR /app/backend
 COPY backend/package.json backend/package-lock.json* ./
+RUN apk add --no-cache python3 make g++
 RUN npm ci
 WORKDIR /app
 

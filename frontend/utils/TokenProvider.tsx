@@ -77,15 +77,15 @@ const TokenProvider = ({ toastMessages, locale, children }: TokenProps) => {
   };
 
   const isProjectManager = (projectId: number) => {
-    return tokenIsProjectManager(projectRoles, projectId);
+    return isAdmin() || tokenIsProjectManager(projectRoles, projectId);
   };
 
   const isProjectDeveloper = (projectId: number) => {
-    return tokenIsProjectDeveloper(projectRoles, projectId);
+    return isAdmin() || tokenIsProjectDeveloper(projectRoles, projectId);
   };
 
   const isProjectReporter = (projectId: number) => {
-    return tokenIsProjectReporter(projectRoles, projectId);
+    return isAdmin() || tokenIsProjectReporter(projectRoles, projectId);
   };
 
   async function refreshProjectRoles() {
