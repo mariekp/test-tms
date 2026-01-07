@@ -75,6 +75,15 @@ export default function ArboristTree({
     return () => window.removeEventListener('resize', update);
   }, []);
 
+  const getRootCreateNode = (): NodeData => ({
+    id: 'create-root',
+    name: 'New Folder',
+    isCreateNode: true,
+    createParentId: null,
+    children: [],
+    loaded: true,
+  });
+
   // --- Загрузка папок ---
   useEffect(() => {
     if (!ctx.isSignedIn()) return;
@@ -93,7 +102,7 @@ export default function ArboristTree({
           indeterminate: false,
           open: false,
         }));
-      setTreeData(roots);
+      setTreeData(roots.length ? [...roots, getRootCreateNode()] : [getRootCreateNode()]);
     });
   }, [projectId, ctx]);
 
@@ -160,28 +169,33 @@ export default function ArboristTree({
       if (!folder) return;
     }
 
-    // Принудительно перезагрузить содержимое папки
-    const folderNode: NodeData = {
-      id: `folder-${folderId}`,
-      name: folder.name,
-      folderId: folderId,
-      parentFolderId: folder.parentFolderId,
-      children: [],
-      loaded: false,
+    const findNodeByFolderId = (nodes: NodeData[]): NodeData | undefined => {
+      for (const n of nodes) {
+        if (n.folderId === folderId) return n;
+        const found = findNodeByFolderId(n.children);
+        if (found) return found;
+      }
+      return undefined;
     };
 
-    await loadFolder(folderNode);
+    const existingNode = findNodeByFolderId(treeData);
 
-    // Обновить дерево
-    const updateTree = (nodes: NodeData[]): NodeData[] =>
-      nodes.map((n) => {
-        if (n.folderId === folderId) {
-          return { ...folderNode, children: folderNode.children };
-        }
-        return { ...n, children: updateTree(n.children) };
-      });
+    const targetNode: NodeData =
+      existingNode
+        ? { ...existingNode, loaded: false }
+        : {
+            id: `folder-${folderId}`,
+            name: folder.name,
+            folderId: folderId,
+            parentFolderId: folder.parentFolderId,
+            children: [],
+            loaded: false,
+            checked: false,
+            indeterminate: false,
+            open: false,
+          };
 
-    setTreeData((prev) => updateTree(prev));
+    await loadFolder(targetNode);
   };
 
   // --- Клик по узлу ---
@@ -303,7 +317,7 @@ export default function ArboristTree({
     style,
     level,
   }: {
-    parentFolderId: number;
+    parentFolderId: number | null;
     style: React.CSSProperties;
     level: number;
   }) => {
@@ -333,8 +347,32 @@ export default function ArboristTree({
 
         if (newFolder) {
           setAllFolders((prev) => [...prev, newFolder]);
+
+          if (parentFolderId === null) {
+            setTreeData((prev) => {
+              const withoutRootCreate = prev.filter(
+                (node) => !(node.isCreateNode && node.createParentId === null)
+              );
+              const createNode = prev.find((node) => node.isCreateNode && node.createParentId === null);
+              const newRootNode: NodeData = {
+                id: `folder-${newFolder.id}`,
+                name: newFolder.name,
+                children: [],
+                folderId: newFolder.id,
+                parentFolderId: null,
+                loaded: false,
+                checked: false,
+                indeterminate: false,
+                open: false,
+              };
+
+              return createNode ? [...withoutRootCreate, newRootNode, createNode] : [...withoutRootCreate, newRootNode];
+            });
+          }
         }
       } else {
+        if (parentFolderId === null) return;
+
         const newCase = await createCase(ctx.token.access_token, String(parentFolderId), trimmedValue, '');
 
         if (newCase && onCaseClick) {
@@ -344,7 +382,14 @@ export default function ArboristTree({
 
       setValue('');
       setMode('folder');
-      await reloadFolder(parentFolderId);
+      if (parentFolderId !== null) {
+        await reloadFolder(parentFolderId);
+      } else {
+        setTreeData((prev) => {
+          const createNode = prev.find((node) => node.isCreateNode && node.createParentId === null);
+          return createNode ? [createNode] : prev;
+        });
+      }
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -474,7 +519,7 @@ export default function ArboristTree({
             open: false,
           }));
 
-        setTreeData(roots);
+        setTreeData(roots.length ? [...roots, getRootCreateNode()] : [getRootCreateNode()]);
 
         // рекурсивно подгружаем кейсы для всех папок
         const loadCasesRecursively = async (nodes: NodeData[]) => {
